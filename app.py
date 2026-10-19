@@ -1,9 +1,8 @@
 """Nosso Download: interface leve para vídeos públicos do Instagram.
-Hospedagem: Render (Flask + Gunicorn + yt-dlp).
+Hospedagem: Railway/Render (Flask + Gunicorn + yt-dlp + FFmpeg).
 """
 
 from collections import defaultdict, deque
-from datetime import datetime, timezone
 from pathlib import Path
 from threading import BoundedSemaphore, Lock
 from urllib.parse import urlsplit
@@ -203,7 +202,10 @@ def baixar():
 
         opcoes = {
             'outtmpl': str(pasta / '%(id)s.%(ext)s'),
-            'format': 'best[ext=mp4]/best',
+            # Primeiro tenta vídeo e áudio separados, juntando com FFmpeg.
+            # Se não existirem faixas separadas, usa MP4 já com áudio.
+            'format': 'bv[ext=mp4]+ba[ext=m4a]/bv+ba/b[ext=mp4]/b',
+            'merge_output_format': 'mp4',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
@@ -215,9 +217,12 @@ def baixar():
         }
         with yt_dlp.YoutubeDL(opcoes) as downloader:
             info = downloader.extract_info(link, download=True)
-        candidatos = [p for p in pasta.iterdir() if p.is_file() and not p.name.endswith(('.part', '.ytdl'))]
+
+        # Seleciona somente vídeo finalizado, nunca áudio avulso ou temporários.
+        candidatos = [p for p in pasta.iterdir()
+                      if p.is_file() and p.suffix.lower() in ('.mp4', '.mkv', '.webm', '.mov')]
         if not candidatos:
-            return resposta_erro('O Instagram não disponibilizou um arquivo para este link.', 422)
+            return resposta_erro('O Instagram não disponibilizou um arquivo de vídeo para este link.', 422)
         arquivo = max(candidatos, key=lambda p: p.stat().st_size)
         if arquivo.stat().st_size > LIMITE_BYTES:
             return resposta_erro('O vídeo passa de 100 MB, limite desta versão.', 413)
